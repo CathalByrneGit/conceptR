@@ -1,0 +1,109 @@
+---
+title: "Concept Lifecycle Overview"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Concept Lifecycle Overview}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>")
+```
+
+This vignette walks through a full concept lifecycle: define, version, activate,
+evaluate, compare, and deprecate.
+
+## Setup
+
+```{r}
+library(conceptR)
+library(duckdb)
+
+con <- DBI::dbConnect(duckdb(), ":memory:")
+
+bundle <- structure(
+  list(
+    object_types = list(
+      list(id = "Patient", table_name = "patients", primary_key = "patient_id")
+    )
+  ),
+  class = "ontology_bundle"
+)
+
+DBI::dbExecute(con, "
+  CREATE TABLE patients (
+    patient_id    TEXT PRIMARY KEY,
+    age           INTEGER,
+    comorbidities INTEGER
+  )
+")
+
+set.seed(42)
+for (i in 1:20) {
+  DBI::dbExecute(con,
+    "INSERT INTO patients VALUES (?, ?, ?)",
+    params = list(paste0("PT", i), sample(30:85, 1), sample(0:5, 1)))
+}
+
+ctx <- concept_context(bundle, con)
+```
+
+## Define a concept
+
+```{r}
+cpt_define(ctx, "high_risk_patient", "Patient",
+  description = "Patient at elevated clinical risk")
+```
+
+## Add and activate version 1
+
+```{r}
+cpt_add_version(ctx, "high_risk_patient", "clinical",
+  sql_expr  = "age > 65 AND comorbidities > 2",
+  rationale = "Initial risk threshold based on literature review",
+  status    = "draft")
+
+cpt_activate(ctx, "high_risk_patient", "clinical", version = 1L)
+```
+
+## Evaluate
+
+```{r}
+results_v1 <- cpt_evaluate(ctx, "high_risk_patient", "clinical")
+cat("High-risk patients (v1):", sum(results_v1$high_risk_patient), "\n")
+head(results_v1)
+```
+
+## Add a revised version and compare
+
+Version 2 lowers the age threshold and adds a third comorbidity option.
+
+```{r}
+cpt_add_version(ctx, "high_risk_patient", "clinical",
+  sql_expr  = "age > 60 AND comorbidities > 1",
+  rationale = "Revised based on clinical audit — wider definition",
+  status    = "draft")
+
+diff <- cpt_compare_versions(ctx, "high_risk_patient", "clinical",
+  version_a = 1L, version_b = 2L)
+
+cat("V1 count:", diff$total_a, "\n")
+cat("V2 count:", diff$total_b, "\n")
+cat("In V1 only:", diff$only_a, "\n")
+cat("In V2 only:", diff$only_b, "\n")
+cat("Matching:  ", diff$match,  "\n")
+```
+
+## Activate v2 and deprecate v1
+
+```{r}
+cpt_activate(ctx, "high_risk_patient", "clinical", version = 2L)
+cpt_deprecate(ctx, "high_risk_patient", "clinical", version = 1L)
+
+cpt_get_version(ctx, "high_risk_patient", "clinical")$version
+```
+
+```{r include=FALSE}
+DBI::dbDisconnect(con, shutdown = TRUE)
+```

@@ -1,0 +1,100 @@
+---
+title: "Composite Scoring"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Composite Scoring}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>")
+```
+
+Composite scores combine multiple concept evaluations into a single numeric score
+per object instance.
+
+## Setup
+
+```{r}
+library(conceptR)
+library(duckdb)
+
+con <- DBI::dbConnect(duckdb(), ":memory:")
+
+bundle <- structure(
+  list(
+    object_types = list(
+      list(id = "Patient", table_name = "patients", primary_key = "patient_id")
+    )
+  ),
+  class = "ontology_bundle"
+)
+
+DBI::dbExecute(con, "
+  CREATE TABLE patients (
+    patient_id      TEXT PRIMARY KEY,
+    age             INTEGER,
+    comorbidities   INTEGER,
+    readmission_risk INTEGER
+  )
+")
+
+set.seed(7)
+for (i in 1:25) {
+  DBI::dbExecute(con,
+    "INSERT INTO patients VALUES (?, ?, ?, ?)",
+    params = list(paste0("PT", i),
+                  sample(30:85, 1), sample(0:5, 1), sample(0:1, 1)))
+}
+
+ctx <- concept_context(bundle, con)
+```
+
+## Define component concepts
+
+```{r}
+cpt_define(ctx, "elderly",           "Patient")
+cpt_define(ctx, "multimorbid",       "Patient")
+cpt_define(ctx, "readmission_risk",  "Patient")
+
+cpt_add_version(ctx, "elderly",          "clinical", "age > 65",              status = "active")
+cpt_add_version(ctx, "multimorbid",      "clinical", "comorbidities > 2",     status = "active")
+cpt_add_version(ctx, "readmission_risk", "clinical", "readmission_risk = 1",  status = "active")
+```
+
+## Define a weighted composite score
+
+```{r}
+cpt_define_score(ctx, "frailty_index", "Patient",
+  components = list(
+    list(concept_id = "elderly",          scope = "clinical", version = 1L, weight = 1.0),
+    list(concept_id = "multimorbid",      scope = "clinical", version = 1L, weight = 2.0),
+    list(concept_id = "readmission_risk", scope = "clinical", version = 1L, weight = 3.0)
+  ),
+  aggregation = "weighted_sum",
+  thresholds  = list(low = 1, medium = 3, high = 5),
+  description = "Composite frailty index (0-6)"
+)
+```
+
+## Evaluate the score
+
+```{r}
+results <- cpt_evaluate_score(ctx, "frailty_index")
+head(results)
+```
+
+## Score distribution
+
+```{r}
+dist <- cpt_score_distribution(ctx, "frailty_index")
+cat("Min:",    dist$min,    "\n")
+cat("Median:", dist$median, "\n")
+cat("Max:",    dist$max,    "\n")
+print(dist$tier_counts)
+```
+
+```{r include=FALSE}
+DBI::dbDisconnect(con, shutdown = TRUE)
+```

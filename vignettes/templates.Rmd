@@ -1,0 +1,109 @@
+---
+title: "Concept Templates and Inheritance"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Concept Templates and Inheritance}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>")
+```
+
+Templates let you define a parameterised SQL expression once and derive multiple
+concept versions by supplying different parameter values.
+
+## Setup
+
+```{r}
+library(conceptR)
+library(duckdb)
+
+con <- DBI::dbConnect(duckdb(), ":memory:")
+
+bundle <- structure(
+  list(
+    object_types = list(
+      list(id = "Person", table_name = "persons", primary_key = "person_id")
+    )
+  ),
+  class = "ontology_bundle"
+)
+
+DBI::dbExecute(con, "
+  CREATE TABLE persons (
+    person_id       TEXT PRIMARY KEY,
+    employed        INTEGER,
+    available_work  INTEGER,
+    seeking_work    INTEGER,
+    ref_weeks       INTEGER
+  )
+")
+
+set.seed(1)
+for (i in 1:40) {
+  DBI::dbExecute(con,
+    "INSERT INTO persons VALUES (?, ?, ?, ?, ?)",
+    params = list(paste0("P", i),
+                  sample(0:1, 1), sample(0:1, 1), sample(0:1, 1),
+                  sample(1:4, 1)))
+}
+
+ctx <- concept_context(bundle, con)
+```
+
+## Define an ILO unemployment template
+
+```{r}
+cpt_define_template(ctx, "ilo_unemployed", "Person",
+  base_sql_expr = paste0(
+    "employed = 0 AND available_work = 1 AND ",
+    "seeking_work = 1 AND ref_weeks >= {{min_ref_weeks}}"
+  ),
+  parameters = list(
+    min_ref_weeks = list(
+      type        = "integer",
+      default     = 1L,
+      description = "Minimum reference period in weeks"
+    )
+  ),
+  source_standard = "ILO-2013"
+)
+```
+
+## Preview without committing
+
+```{r}
+cpt_render_template(ctx, "ilo_unemployed", list(min_ref_weeks = 2))
+```
+
+## Derive country variants
+
+```{r}
+cpt_inherit(ctx, "unemployed_ireland", "ilo_unemployed", "national",
+  parameter_values = list(min_ref_weeks = 1L),
+  rationale        = "CSO methodology: 1-week reference",
+  status           = "active")
+
+cpt_inherit(ctx, "unemployed_us", "ilo_unemployed", "national",
+  parameter_values = list(min_ref_weeks = 4L),
+  rationale        = "BLS methodology: 4-week reference",
+  status           = "active")
+```
+
+## Compare variants
+
+```{r}
+cpt_compare_template_variants(ctx, "ilo_unemployed")
+```
+
+## List all templates
+
+```{r}
+cpt_list_templates(ctx)
+```
+
+```{r include=FALSE}
+DBI::dbDisconnect(con, shutdown = TRUE)
+```
