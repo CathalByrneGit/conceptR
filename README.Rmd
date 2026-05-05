@@ -1,0 +1,221 @@
+---
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  collapse  = TRUE,
+  comment   = "#>",
+  fig.path  = "man/figures/README-"
+)
+```
+
+# conceptR
+
+`conceptR` is the concept lifecycle and evaluation package in the ontology stack.
+It lets you define versioned, scoped data definitions — *concepts* — as SQL boolean
+expressions evaluated against object types, then track them through draft → active →
+deprecated states with full auditability.
+
+Concepts are hypotheses, not decrees. You can compare versions, preview changes before
+committing, derive variants from templates, and build composite scores — all without
+ever pulling a full table into R memory.
+
+## Position in the ecosystem
+
+```
+ontologySpecR   objectSetsR
+       └─────────────┴──► conceptR ──► auditR
+                               └──────► objectExploreR
+                               └──────► vertexR
+```
+
+## Installation
+
+```r
+# install.packages("pak")
+pak::pak("CathalByrneGit/conceptR")
+```
+
+## Quick start
+
+```{r quickstart, eval=FALSE}
+library(conceptR)
+
+# --- setup (bundle + connection come from your ontologySpecR workflow) ---
+bundle <- ontologySpecR::read_bundle("my-ontology.json")
+con    <- DBI::dbConnect(duckdb::duckdb(), "my.duckdb")
+ctx    <- concept_context(bundle, con)
+
+# --- define a concept ---
+cpt_define(ctx, "high_risk_patient", "Patient",
+  description = "Patient at elevated clinical risk")
+
+# --- add and activate a version ---
+cpt_add_version(ctx, "high_risk_patient", "clinical",
+  sql_expr  = "age > 65 AND comorbidities > 2",
+  rationale = "Initial risk threshold per clinical protocol")
+
+cpt_activate(ctx, "high_risk_patient", "clinical", version = 1L)
+
+# --- evaluate ---
+cpt_evaluate(ctx, "high_risk_patient", "clinical")
+#> # A tibble: 1,200 × 2
+#>   patient_id high_risk_patient
+#>   <chr>      <lgl>
+#> 1 PT001      TRUE
+#> 2 PT002      FALSE
+#> ...
+```
+
+## Core concepts
+
+### Lifecycle
+
+Every concept version moves through three states:
+
+```
+draft  ──►  active  ──►  deprecated
+```
+
+Multiple versions of the same `(concept_id, scope)` pair can be active
+simultaneously — this is intentional. It supports gradual migration without a
+hard cutover.
+
+```{r lifecycle, eval=FALSE}
+cpt_add_version(ctx, "high_risk_patient", "clinical",
+  sql_expr = "age > 60 AND comorbidities > 1")   # v2 — wider definition
+
+cpt_activate(ctx, "high_risk_patient", "clinical", version = 2L)
+cpt_deprecate(ctx, "high_risk_patient", "clinical", version = 1L)
+```
+
+### Version comparison
+
+```{r compare, eval=FALSE}
+cpt_compare_versions(ctx, "high_risk_patient", "clinical",
+  version_a = 1L, version_b = 2L)
+#> $total_a    [1] 87
+#> $total_b    [1] 134
+#> $match      [1] 87
+#> $only_a     [1] 0
+#> $only_b     [1] 47
+```
+
+### Templates
+
+Define a parameterised SQL expression once; derive country- or site-specific
+variants by supplying different parameter values.
+
+```{r templates, eval=FALSE}
+cpt_define_template(ctx, "ilo_unemployed", "Person",
+  base_sql_expr = "employed = 0 AND seeking_work = 1 AND ref_weeks >= {{min_ref_weeks}}",
+  parameters    = list(
+    min_ref_weeks = list(type = "integer", default = 1L,
+                         description = "Minimum reference period in weeks")
+  ),
+  source_standard = "ILO-2013"
+)
+
+# Preview without committing
+cpt_render_template(ctx, "ilo_unemployed", list(min_ref_weeks = 4))
+#> [1] "employed = 0 AND seeking_work = 1 AND ref_weeks >= 4"
+
+# Derive country variants
+cpt_inherit(ctx, "unemployed_ireland", "ilo_unemployed", "national",
+  parameter_values = list(min_ref_weeks = 1L), status = "active")
+
+cpt_inherit(ctx, "unemployed_us", "ilo_unemployed", "national",
+  parameter_values = list(min_ref_weeks = 4L), status = "active")
+
+cpt_compare_template_variants(ctx, "ilo_unemployed")
+#>         concept_id    scope version min_ref_weeks
+#> 1 unemployed_ireland national       1             1
+#> 2      unemployed_us national       1             4
+```
+
+### Scenario analysis
+
+Evaluate a proposed SQL expression against the current active version before
+creating a new version row.
+
+```{r scenario, eval=FALSE}
+cpt_scenario(ctx, "high_risk_patient", "clinical",
+  proposed_sql = "age > 60 AND comorbidities > 1")
+#> $current_count    [1] 87
+#> $proposed_count   [1] 134
+#> $newly_included   # data frame — 47 rows
+#> $newly_excluded   # data frame — 0 rows
+#> $agreement_rate   [1] 0.961
+```
+
+### Composite scores
+
+Combine multiple concepts into a single weighted score per object instance.
+
+```{r scores, eval=FALSE}
+cpt_define_score(ctx, "frailty_index", "Patient",
+  components = list(
+    list(concept_id = "elderly",          scope = "clinical", weight = 1.0),
+    list(concept_id = "multimorbid",      scope = "clinical", weight = 2.0),
+    list(concept_id = "readmission_risk", scope = "clinical", weight = 3.0)
+  ),
+  aggregation = "weighted_sum",
+  thresholds  = list(low = 1, medium = 3, high = 5)
+)
+
+cpt_evaluate_score(ctx, "frailty_index")
+#>   patient_id elderly multimorbid readmission_risk score  tier
+#>   PT001         TRUE        TRUE             TRUE     6  high
+#>   PT002        FALSE       FALSE            FALSE     0   low
+#>   ...
+
+cpt_score_distribution(ctx, "frailty_index")
+#> $min    [1] 0
+#> $median [1] 2
+#> $max    [1] 6
+#> $tier_counts
+#>    low medium high
+#>    412    389  399
+```
+
+## Design principles
+
+- **Push-down SQL.** Concept evaluation never pulls all rows into R. The boolean
+  expression is evaluated entirely in the database.
+- **Immutable versions.** A version's `sql_expr` is never updated in place. To
+  revise a definition, add a new version.
+- **No global state.** Every function takes an explicit `ctx`. Multiple ontologies
+  can coexist in one R session.
+- **Coexistence is intentional.** Multiple versions of the same `(concept_id, scope)`
+  can be active simultaneously, allowing gradual migration.
+
+## Package structure
+
+```
+R/
+  context.R      # concept_context(), schema initialisation
+  lifecycle.R    # cpt_define, cpt_add_version, cpt_activate, cpt_deprecate
+  evaluate.R     # cpt_evaluate, cpt_evaluate_multi, cpt_compare_versions
+  templates.R    # cpt_define_template, cpt_inherit, cpt_render_template
+  scores.R       # cpt_define_score, cpt_evaluate_score, cpt_score_distribution
+  scenario.R     # cpt_scenario, cpt_compare_scenarios
+  utils.R        # internal helpers
+```
+
+## Vignettes
+
+- `vignette("concept-overview")` — full lifecycle walkthrough
+- `vignette("templates")` — ILO unemployment template with country variants
+- `vignette("scores")` — composite frailty index example
+
+## Related packages
+
+| Package | Role |
+|---|---|
+| `ontologySpecR` | Type system and bundle format |
+| `objectSetsR` | Lazy query algebra over object tables |
+| `auditR` | Sampling, drift detection, RBAC, governance log |
+| `actionTypesR` | Action execution |
+| `vertexR` | Graph analysis (colour nodes by concept) |
+| `objectExploreR` | Interactive Shiny browser |
