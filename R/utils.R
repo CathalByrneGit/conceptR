@@ -65,6 +65,46 @@
   row
 }
 
+# Stage-aware resolver used by cpt_evaluate() when version = NULL.
+# Priority: production (silent) > staging (warn) > development (stronger warn) > abort.
+.resolve_version_for_eval <- function(ctx, concept_id, scope) {
+  row <- DBI::dbGetQuery(ctx$connection,
+    "SELECT * FROM concept_versions
+     WHERE concept_id = ? AND scope = ? AND stage = 'production' AND status = 'active'
+     ORDER BY version DESC LIMIT 1",
+    params = list(concept_id, scope))
+  if (nrow(row) > 0) return(row)
+
+  row <- DBI::dbGetQuery(ctx$connection,
+    "SELECT * FROM concept_versions
+     WHERE concept_id = ? AND scope = ? AND stage = 'staging' AND status = 'active'
+     ORDER BY version DESC LIMIT 1",
+    params = list(concept_id, scope))
+  if (nrow(row) > 0) {
+    cli::cli_warn(
+      "Evaluating {.val {concept_id}} / {.val {scope}} using a staging version \\
+       (v{row$version[1]}). Promote to production for use in automated pipelines.")
+    return(row)
+  }
+
+  row <- DBI::dbGetQuery(ctx$connection,
+    "SELECT * FROM concept_versions
+     WHERE concept_id = ? AND scope = ? AND stage = 'development' AND status = 'active'
+     ORDER BY version DESC LIMIT 1",
+    params = list(concept_id, scope))
+  if (nrow(row) > 0) {
+    cli::cli_warn(
+      "Evaluating {.val {concept_id}} / {.val {scope}} using a development version \\
+       (v{row$version[1]}). Not suitable for production pipelines. \\
+       Promote to staging then production before use in downstream decisions.")
+    return(row)
+  }
+
+  cli::cli_abort(
+    "No active version for concept {.val {concept_id}} / scope {.val {scope}}. \\
+     Activate one first or supply an explicit version number.")
+}
+
 .get_def_row <- function(ctx, concept_id) {
   DBI::dbGetQuery(ctx$connection,
     "SELECT * FROM concept_definitions WHERE concept_id = ?",

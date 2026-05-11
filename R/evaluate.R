@@ -1,16 +1,24 @@
 #' Evaluate a concept against its object type
 #'
+#' When `version = NULL`, resolution prefers `production` over `staging` over
+#' `development` (issuing warnings for non-production stages). Supply an explicit
+#' `version` to bypass stage-aware resolution.
+#'
 #' @param ctx A `ConceptContext`.
 #' @param concept_id Concept identifier.
 #' @param scope Scope string.
-#' @param version Version number. If `NULL`, uses the active version.
+#' @param version Version number. If `NULL`, uses stage-aware resolution.
 #' @param object_type_id Override the stored object type.
 #' @return A data frame with PK columns and a logical column named after the concept.
 #' @export
 cpt_evaluate <- function(ctx, concept_id, scope, version = NULL,
                           object_type_id = NULL) {
   .assert_ctx(ctx)
-  ver_row  <- .resolve_version(ctx, concept_id, scope, version)
+  ver_row <- if (is.null(version)) {
+    .resolve_version_for_eval(ctx, concept_id, scope)
+  } else {
+    .resolve_version(ctx, concept_id, scope, version)
+  }
   sql_expr <- ver_row$sql_expr[1]
   if (is.null(sql_expr) || is.na(sql_expr) || nchar(trimws(sql_expr)) == 0)
     cli::cli_abort("sql_expr for {.val {concept_id}} v{ver_row$version} is empty.")

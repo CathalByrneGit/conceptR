@@ -53,9 +53,9 @@ cpt_add_version <- function(ctx, concept_id, scope, sql_expr,
 
   DBI::dbExecute(ctx$connection,
     "INSERT INTO concept_versions
-       (concept_id, scope, version, sql_expr, status, rationale, source_standard,
+       (concept_id, scope, version, sql_expr, status, stage, rationale, source_standard,
         template_id, parameter_values_json, created_at, activated_at, deprecated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+     VALUES (?, ?, ?, ?, ?, 'development', ?, ?, ?, ?, ?, ?, ?)",
     params = list(
       concept_id, scope, version, sql_expr, status,
       rationale %||% NA_character_,
@@ -164,6 +164,161 @@ cpt_list <- function(ctx, object_type_id = NULL, status = NULL) {
   if (length(where) > 0)
     sql <- paste(sql, "WHERE", paste(where, collapse = " AND "))
   sql <- paste(sql, "GROUP BY d.concept_id, d.object_type_id, d.description, d.created_at")
+
+  DBI::dbGetQuery(ctx$connection, sql, params = params)
+}
+
+#' Promote a concept version to a higher stage
+#'
+#' Valid transitions: `development` -> `staging`, `staging` -> `production`.
+#' Promoting to `production` soft-demotes any existing production version to
+#' `staging`. Calls `auditR::adt_check_promotion()` if auditR is available;
+#' otherwise warns that no evidence check was performed.
+#'
+#' @param ctx A `ConceptContext`.
+#' @param concept_id Character.
+#' @param scope Character.
+#' @param version Integer.
+#' @param to_stage One of `"staging"` or `"production"`.
+#' @param notes Optional character note recorded in the governance log.
+#' @return `ctx` invisibly.
+#' @export
+cpt_promote <- function(ctx, concept_id, scope, version,
+                         to_stage = c("staging", "production"),
+                         notes = NULL) {
+  .assert_ctx(ctx)
+  to_stage <- match.arg(to_stage)
+
+  row <- .get_version_row(ctx, concept_id, scope, version)
+  if (nrow(row) == 0)
+    cli::cli_abort("Version {version} of {.val {concept_id}} / {.val {scope}} not found.")
+  if (row$status == "deprecated")
+    cli::cli_abort("Cannot promote a deprecated version.")
+
+  current_stage <- row$stage
+  valid_from <- switch(to_stage,
+    staging    = "development",
+    production = "staging"
+  )
+  if (current_stage != valid_from)
+    cli::cli_abort(
+      "Cannot promote from stage {.val {current_stage}} to {.val {to_stage}}. \\
+       Expected current stage: {.val {valid_from}}.")
+
+  if (to_stage == "production") {
+    if (requireNamespace("auditR", quietly = TRUE) && !is.null(ctx$audit_ctx)) {
+      auditR::adt_check_promotion(ctx$audit_ctx, concept_id, scope, version)
+    } else {
+      cli::cli_warn(
+        "No {.pkg auditR} evidence check performed. \\
+         Attach an audit context via {.code ctx$audit_ctx} to gate production promotion.")
+    }
+    # Soft-demote any existing production version for this (concept, scope)
+    DBI::dbExecute(ctx$connection,
+      "UPDATE concept_versions SET stage = 'staging'
+       WHERE concept_id = ? AND scope = ? AND stage = 'production' AND version != ?",
+      params = list(concept_id, scope, version))
+  }
+
+  DBI::dbExecute(ctx$connection,
+    "UPDATE concept_versions SET stage = ?
+     WHERE concept_id = ? AND scope = ? AND version = ?",
+    params = list(to_stage, concept_id, scope, version))
+
+  if (!is.null(ctx$audit_ctx) && requireNamespace("auditR", quietly = TRUE)) {
+    auditR::adt_log(ctx$audit_ctx,
+      action     = paste0("promote_to_", to_stage),
+      concept_id = concept_id, scope = scope, version = version,
+      notes      = notes)
+  }
+
+  invisible(ctx)
+}
+
+#' Roll back a concept version to a lower stage
+#'
+#' Valid transitions: `staging` -> `development`, `production` -> `staging`.
+#' A `reason` is required.
+#'
+#' @param ctx A `ConceptContext`.
+#' @param concept_id Character.
+#' @param scope Character.
+#' @param version Integer.
+#' @param to_stage One of `"development"` or `"staging"`.
+#' @param reason Character. Required — must explain why rolling back.
+#' @return `ctx` invisibly.
+#' @export
+cpt_rollback <- function(ctx, concept_id, scope, version,
+                          to_stage = c("development", "staging"),
+                          reason) {
+  .assert_ctx(ctx)
+  to_stage <- match.arg(to_stage)
+
+  if (missing(reason) || is.null(reason) || nchar(trimws(reason)) == 0)
+    cli::cli_abort("{.arg reason} is required for rollback.")
+
+  row <- .get_version_row(ctx, concept_id, scope, version)
+  if (nrow(row) == 0)
+    cli::cli_abort("Version {version} of {.val {concept_id}} / {.val {scope}} not found.")
+
+  current_stage <- row$stage
+  valid_from <- switch(to_stage,
+    development = "staging",
+    staging     = "production"
+  )
+  if (current_stage != valid_from)
+    cli::cli_abort(
+      "Cannot roll back from stage {.val {current_stage}} to {.val {to_stage}}. \\
+       Expected current stage: {.val {valid_from}}.")
+
+  DBI::dbExecute(ctx$connection,
+    "UPDATE concept_versions SET stage = ?
+     WHERE concept_id = ? AND scope = ? AND version = ?",
+    params = list(to_stage, concept_id, scope, version))
+
+  invisible(ctx)
+}
+
+#' Get the production version for a concept/scope
+#'
+#' @param ctx A `ConceptContext`.
+#' @param concept_id Character.
+#' @param scope Character.
+#' @return A list with the version row, or `NULL` if no production version exists.
+#' @export
+cpt_production_version <- function(ctx, concept_id, scope) {
+  .assert_ctx(ctx)
+  row <- DBI::dbGetQuery(ctx$connection,
+    "SELECT * FROM concept_versions
+     WHERE concept_id = ? AND scope = ? AND stage = 'production'
+     ORDER BY version DESC LIMIT 1",
+    params = list(concept_id, scope))
+  if (nrow(row) == 0) return(NULL)
+  as.list(row[1, , drop = FALSE])
+}
+
+#' List versions filtered by stage
+#'
+#' @param ctx A `ConceptContext`.
+#' @param concept_id Optional character filter.
+#' @param scope Optional character filter.
+#' @param stage One of `"development"`, `"staging"`, `"production"`, or `NULL`
+#'   for all stages.
+#' @return A data frame.
+#' @export
+cpt_versions_by_stage <- function(ctx, concept_id = NULL, scope = NULL,
+                                   stage = NULL) {
+  .assert_ctx(ctx)
+  valid_stages <- c("development", "staging", "production")
+  if (!is.null(stage) && !stage %in% valid_stages)
+    cli::cli_abort("{.arg stage} must be one of {.val {valid_stages}} or NULL.")
+
+  sql    <- "SELECT * FROM concept_versions WHERE 1=1"
+  params <- list()
+  if (!is.null(concept_id)) { sql <- paste(sql, "AND concept_id = ?"); params <- c(params, list(concept_id)) }
+  if (!is.null(scope))      { sql <- paste(sql, "AND scope = ?");      params <- c(params, list(scope)) }
+  if (!is.null(stage))      { sql <- paste(sql, "AND stage = ?");      params <- c(params, list(stage)) }
+  sql <- paste(sql, "ORDER BY concept_id, scope, version")
 
   DBI::dbGetQuery(ctx$connection, sql, params = params)
 }

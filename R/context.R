@@ -38,6 +38,7 @@ concept_context <- function(bundle, connection) {
       version               INTEGER NOT NULL,
       sql_expr              TEXT    NOT NULL,
       status                TEXT    NOT NULL DEFAULT 'draft',
+      stage                 TEXT    NOT NULL DEFAULT 'development',
       rationale             TEXT,
       source_standard       TEXT,
       template_id           TEXT,
@@ -48,6 +49,13 @@ concept_context <- function(bundle, connection) {
       PRIMARY KEY (concept_id, scope, version)
     )
   ")
+
+  # Migration: add stage column to databases created before this change.
+  existing_cols <- DBI::dbListFields(con, "concept_versions")
+  if (!"stage" %in% existing_cols) {
+    DBI::dbExecute(con,
+      "ALTER TABLE concept_versions ADD COLUMN stage TEXT NOT NULL DEFAULT 'development'")
+  }
 
   DBI::dbExecute(con, "
     CREATE TABLE IF NOT EXISTS concept_templates (
