@@ -171,9 +171,8 @@ cpt_list <- function(ctx, object_type_id = NULL, status = NULL) {
 #' Promote a concept version to a higher stage
 #'
 #' Valid transitions: `development` -> `staging`, `staging` -> `production`.
-#' Promoting to `production` soft-demotes any existing production version to
-#' `staging`. Calls `auditR::adt_check_promotion()` if auditR is available;
-#' otherwise warns that no evidence check was performed.
+#' Promoting to `production` runs the promotion gate (RBAC + drift check) and
+#' soft-demotes any existing production version to `staging`.
 #'
 #' @param ctx A `ConceptContext`.
 #' @param concept_id Character.
@@ -181,11 +180,13 @@ cpt_list <- function(ctx, object_type_id = NULL, status = NULL) {
 #' @param version Integer.
 #' @param to_stage One of `"staging"` or `"production"`.
 #' @param notes Optional character note recorded in the governance log.
+#' @param force Logical. If `TRUE`, bypass the promotion gate with a warning
+#'   and log entry (for emergency overrides). Default `FALSE`.
 #' @return `ctx` invisibly.
 #' @export
 cpt_promote <- function(ctx, concept_id, scope, version,
                          to_stage = c("staging", "production"),
-                         notes = NULL) {
+                         notes = NULL, force = FALSE) {
   .assert_ctx(ctx)
   to_stage <- match.arg(to_stage)
 
@@ -206,13 +207,7 @@ cpt_promote <- function(ctx, concept_id, scope, version,
        Expected current stage: {.val {valid_from}}.")
 
   if (to_stage == "production") {
-    if (requireNamespace("auditR", quietly = TRUE) && !is.null(ctx$audit_ctx)) {
-      auditR::adt_check_promotion(ctx$audit_ctx, concept_id, scope, version)
-    } else {
-      cli::cli_warn(
-        "No {.pkg auditR} evidence check performed. \\
-         Attach an audit context via {.code ctx$audit_ctx} to gate production promotion.")
-    }
+    .check_promotion(ctx, concept_id, scope, version, force = force)
     # Soft-demote any existing production version for this (concept, scope)
     DBI::dbExecute(ctx$connection,
       "UPDATE concept_versions SET stage = 'staging'
@@ -225,12 +220,9 @@ cpt_promote <- function(ctx, concept_id, scope, version,
      WHERE concept_id = ? AND scope = ? AND version = ?",
     params = list(to_stage, concept_id, scope, version))
 
-  if (!is.null(ctx$audit_ctx) && requireNamespace("auditR", quietly = TRUE)) {
-    auditR::adt_log(ctx$audit_ctx,
-      action     = paste0("promote_to_", to_stage),
-      concept_id = concept_id, scope = scope, version = version,
-      notes      = notes)
-  }
+  adt_log(ctx, action = paste0("promote_to_", to_stage),
+          concept_id = concept_id, scope = scope, version = as.integer(version),
+          notes = notes)
 
   invisible(ctx)
 }

@@ -22,11 +22,16 @@ test_that("migration adds stage column to existing database without it", {
     )
   ")
 
-  bundle <- structure(
-    list(object_types = list(
-      list(id = "Encounter", table_name = "encounters", primary_key = "encounter_id")
-    )),
-    class = "ontology_bundle"
+  skip_if_not_installed("ontologySpecR")
+  bundle <- ontologySpecR::bundle(
+    bundle_id = "test", bundle_version = "0.1.0",
+    objects = list(
+      ontologySpecR::object_type(
+        id = "Encounter", properties = list(list(id = "encounter_id")),
+        primary_key = "encounter_id", source_kind = "table",
+        source_table = "encounters"
+      )
+    )
   )
 
   # concept_context() should run the migration

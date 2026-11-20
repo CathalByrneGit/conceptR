@@ -105,6 +105,15 @@
      Activate one first or supply an explicit version number.")
 }
 
+# Resolve an active version integer (for audit functions that need an integer, not a row).
+.resolve_version_int <- function(ctx, concept_id, scope, version) {
+  if (!is.null(version)) return(as.integer(version))
+  row <- .get_active_version(ctx, concept_id, scope)
+  if (nrow(row) == 0L)
+    cli::cli_abort("No active version for {concept_id}/{scope}.")
+  as.integer(row$version[1L])
+}
+
 .get_def_row <- function(ctx, concept_id) {
   DBI::dbGetQuery(ctx$connection,
     "SELECT * FROM concept_definitions WHERE concept_id = ?",
@@ -112,3 +121,52 @@
 }
 
 `%||%` <- function(a, b) if (!is.null(a)) a else b
+
+# ---------------------------------------------------------------------------
+# ontologySpecR object-type accessors
+# ---------------------------------------------------------------------------
+
+.ot_table <- function(ot) ot$source$table
+
+.ot_pk <- function(ot) {
+  pk <- ot$primaryKey$properties
+  if (length(pk) > 1L)
+    cli::cli_abort(
+      "Object type {.val {ot$id}} has a composite primary key — single-column PKs are required.")
+  if (is.list(pk)) pk[[1L]] else as.character(pk[[1L]])
+}
+
+# ---------------------------------------------------------------------------
+# Shared helpers (originally from auditR)
+# ---------------------------------------------------------------------------
+
+new_id <- function() {
+  paste0(
+    format(Sys.time(), "%Y%m%d%H%M%S"),
+    "_",
+    paste0(sample(c(letters, 0:9), 8, replace = TRUE), collapse = "")
+  )
+}
+
+assert_that <- function(cond, msg) {
+  if (!isTRUE(cond)) cli::cli_abort(msg)
+}
+
+parse_roles <- function(roles_json) {
+  if (is.null(roles_json) || is.na(roles_json) || nchar(trimws(roles_json)) == 0)
+    return(character(0))
+  tryCatch(jsonlite::fromJSON(roles_json), error = function(e) character(0))
+}
+
+serialise_roles <- function(roles) jsonlite::toJSON(unique(roles), auto_unbox = FALSE)
+
+serialise_key <- function(...) {
+  cols <- list(...)
+  if (length(cols) == 1L) return(as.character(cols[[1L]]))
+  do.call(paste, c(lapply(cols, as.character), sep = "::"))
+}
+
+quietly_execute <- function(con, sql) {
+  DBI::dbExecute(con, sql)
+  invisible(NULL)
+}

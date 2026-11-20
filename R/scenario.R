@@ -16,10 +16,10 @@ cpt_scenario <- function(ctx, concept_id, scope, proposed_sql,
 
   ot_id <- .get_def_row(ctx, concept_id)$object_type_id
   ot    <- .resolve_object_type(ctx, ot_id)
-  pk    <- ot$primary_key
+  pk    <- .ot_pk(ot)
 
-  df_current  <- .eval_sql(ctx, ot$table_name, pk, concept_id, current_sql)
-  df_proposed <- .eval_sql(ctx, ot$table_name, pk, paste0(concept_id, "_proposed"), proposed_sql)
+  df_current  <- .eval_sql(ctx, .ot_table(ot), pk, concept_id, current_sql)
+  df_proposed <- .eval_sql(ctx, .ot_table(ot), pk, paste0(concept_id, "_proposed"), proposed_sql)
 
   col_curr <- concept_id
   col_prop <- paste0(concept_id, "_proposed")
