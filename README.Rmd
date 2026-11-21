@@ -24,10 +24,32 @@ ever pulling a full table into R memory.
 ## Position in the ecosystem
 
 ```
-ontologySpecR   objectSetsR
-       └─────────────┴──► conceptR ──► auditR
-                               └──────► objectExploreR
-                               └──────► vertexR
+ontologySpecR
+       └──► conceptR ──► objectExploreR
+                └──────► vertexR
+```
+
+`conceptR` v0.2.0 absorbed `auditR` — all `adt_*` functions live here now.
+If your code previously did `library(auditR)`, replace it with `library(conceptR)`.
+
+## auditR merger
+
+`auditR` has been merged into `conceptR` to eliminate the circular dependency
+(`auditR` imported `conceptR`; `conceptR` called `auditR::adt_check_promotion()`).
+The `adt_*` function names are unchanged. The `audit_context()` constructor is
+retained as a shim that sets the actor on an existing `ConceptContext`.
+
+```r
+# Before (two packages):
+# library(auditR)
+# ctx <- concept_context(bundle, con)
+# audit_ctx <- audit_context(ctx, actor = "alice")
+# adt_grant_role(audit_ctx, "alice", "ontology_admin")
+
+# After (one package):
+library(conceptR)
+ctx <- concept_context(bundle, con, actor = "alice")
+adt_grant_role(ctx, "alice", "ontology_admin")
 ```
 
 ## Installation
@@ -43,7 +65,12 @@ pak::pak("CathalByrneGit/conceptR")
 library(conceptR)
 
 # --- setup (bundle + connection come from your ontologySpecR workflow) ---
-bundle <- ontologySpecR::read_bundle("my-ontology.json")
+bundle <- ontologySpecR::bundle(
+  bundle_id = "my-ontology", bundle_version = "0.1.0",
+  objects = list(ontologySpecR::object_type(
+    id = "Patient", properties = list(list(id = "patient_id", type = "text")),
+    primary_key = "patient_id", source_kind = "table", source_table = "patients"))
+)
 con    <- DBI::dbConnect(duckdb::duckdb(), "my.duckdb")
 ctx    <- concept_context(bundle, con)
 
@@ -200,6 +227,14 @@ R/
   templates.R    # cpt_define_template, cpt_inherit, cpt_render_template
   scores.R       # cpt_define_score, cpt_evaluate_score, cpt_score_distribution
   scenario.R     # cpt_scenario, cpt_compare_scenarios
+  sampling.R     # adt_sample, adt_pending_reviews
+  judgments.R    # adt_record_judgment(s)
+  summary.R      # adt_summary, adt_rolling_disagreement
+  drift.R        # adt_check_drift, adt_detect_drift, adt_resolve_drift
+  governance.R   # adt_log, adt_get_log, adt_governance_report
+  rbac.R         # adt_grant_role, adt_revoke_role, adt_get_roles
+  policy.R       # adt_check_policy, adt_define_policy, promotion gate
+  integration.R  # adt_approval_gate (actionTypesR)
   utils.R        # internal helpers
 ```
 
@@ -208,14 +243,14 @@ R/
 - `vignette("concept-overview")` — full lifecycle walkthrough
 - `vignette("templates")` — ILO unemployment template with country variants
 - `vignette("scores")` — composite frailty index example
+- `vignette("audit-governance")` — sampling, drift detection and the promotion gate
 
 ## Related packages
 
 | Package | Role |
 |---|---|
 | `ontologySpecR` | Type system and bundle format |
-| `objectSetsR` | Lazy query algebra over object tables |
-| `auditR` | Sampling, drift detection, RBAC, governance log |
+| `auditR` | Merged into `conceptR` in v0.2.0 (archived) |
 | `actionTypesR` | Action execution |
 | `vertexR` | Graph analysis (colour nodes by concept) |
 | `objectExploreR` | Interactive Shiny browser |

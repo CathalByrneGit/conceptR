@@ -1,0 +1,150 @@
+---
+title: "Audit, Drift and Promotion Governance"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Audit, Drift and Promotion Governance}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>")
+```
+
+Since v0.2.0, `conceptR` contains everything that used to live in `auditR`.
+This vignette walks through the audit loop: sample a concept's output, record
+reviewer judgments, detect drift, and see how an open drift event blocks
+promotion to production.
+
+## Setup
+
+One context carries the bundle, the connection, the acting user and the RBAC
+policies. The audit tables are created automatically by `concept_context()`.
+
+```{r}
+library(conceptR)
+library(duckdb)
+
+con <- DBI::dbConnect(duckdb(), ":memory:")
+
+DBI::dbExecute(con, "CREATE TABLE encounters (encounter_id TEXT PRIMARY KEY, value BOOLEAN)")
+DBI::dbWriteTable(con, "encounters",
+  data.frame(encounter_id = sprintf("enc_%03d", 1:50),
+             value        = rep(c(TRUE, FALSE), times = c(30, 20))),
+  append = TRUE)
+
+bundle <- ontologySpecR::bundle(
+  bundle_id      = "audit-vignette",
+  bundle_version = "0.1.0",
+  objects = list(
+    ontologySpecR::object_type(
+      id           = "Encounter",
+      properties   = list(
+        list(id = "encounter_id", type = "text"),
+        list(id = "value", type = "boolean")
+      ),
+      primary_key  = "encounter_id",
+      source_kind  = "table",
+      source_table = "encounters"
+    )
+  )
+)
+
+ctx <- concept_context(bundle, con, actor = "alice")
+```
+
+## Roles
+
+Policies map actions to the roles allowed to perform them. Grant roles to
+principals before using the gated functions.
+
+```{r}
+adt_grant_role(ctx, "alice", "ontology_admin")
+adt_grant_role(ctx, "bob",   "auditor")
+adt_get_roles(ctx, "alice")
+```
+
+## A concept to audit
+
+```{r}
+cpt_define(ctx, "ready_for_discharge", "Encounter")
+cpt_add_version(ctx, "ready_for_discharge", "flow", "value = TRUE",
+                status = "active")
+```
+
+## Sample and review
+
+`adt_sample()` evaluates the concept in the database, draws a sample of
+objects, and stores it for review.
+
+```{r}
+s <- adt_sample(ctx, "ready_for_discharge", "flow", n = 10L)
+head(s, 3)
+
+adt_pending_reviews(ctx, "ready_for_discharge", "flow")[, c("sample_id", "object_key")][1:3, ]
+```
+
+Reviewers record what they believe the correct value is. Here the reviewer
+agrees with the system on the first sample:
+
+```{r}
+adt_record_judgment(ctx, s$sample_id[1], reviewer_value = s$system_value[1])
+adt_summary(ctx, "ready_for_discharge", "flow")
+```
+
+## Drift
+
+If reviewers disagree with the system more often than a threshold over a
+rolling window, a drift event is opened. The chunks below are not evaluated when
+the vignette is built.
+
+```{r, eval=FALSE}
+# Reviewer disagrees with the system on every remaining sample
+pending <- adt_pending_reviews(ctx, "ready_for_discharge", "flow")
+for (i in seq_len(nrow(pending))) {
+  adt_record_judgment(ctx, pending$sample_id[i],
+                      reviewer_value = !pending$system_value[i])
+}
+
+adt_check_drift(ctx, "ready_for_discharge", "flow", threshold = 0.15)
+adt_detect_drift(ctx, "ready_for_discharge", "flow", threshold = 0.15)
+adt_drift_status(ctx)
+```
+
+## Promotion gate
+
+`cpt_promote(to_stage = "production")` runs the gate. It is blocked when the
+actor lacks a permitted role or when the version has an open drift event.
+
+```{r, eval=FALSE}
+cpt_promote(ctx, "ready_for_discharge", "flow", 1L, to_stage = "staging")
+
+# Open drift: this errors and the version stays in staging
+cpt_promote(ctx, "ready_for_discharge", "flow", 1L, to_stage = "production")
+
+# Resolve the drift event, then promote
+drift <- adt_drift_status(ctx)
+adt_resolve_drift(ctx, drift$drift_id[1], resolution_notes = "Definition reviewed")
+cpt_promote(ctx, "ready_for_discharge", "flow", 1L, to_stage = "production")
+```
+
+An emergency override is available with `force = TRUE`. It warns, proceeds and
+writes a `forced_promote` entry to the governance log.
+
+## Governance log
+
+Lifecycle and audit actions are written to the governance log.
+
+```{r, eval=FALSE}
+adt_get_log(ctx, concept_id = "ready_for_discharge")
+adt_governance_report(ctx)
+```
+
+```{r, include=FALSE}
+DBI::dbDisconnect(con, shutdown = TRUE)
+```
+
+## Migrating from auditR
+
+`audit_context()` is deprecated. Pass `actor` to `concept_context()` instead, and
+call `adt_*` functions with the same context you use for `cpt_*`.

@@ -6,19 +6,27 @@
 # 7 rows satisfy length_of_stay > 3; 3 rows satisfy length_of_stay <= 3.
 
 make_concept_ctx <- function() {
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("ontologySpecR")
+
   con <- DBI::dbConnect(duckdb::duckdb(), ":memory:")
 
-  bundle <- structure(
-    list(
-      object_types = list(
-        list(
-          id          = "Encounter",
-          table_name  = "encounters",
-          primary_key = "encounter_id"
-        )
+  bundle <- ontologySpecR::bundle(
+    bundle_id      = "test",
+    bundle_version = "0.1.0",
+    objects        = list(
+      ontologySpecR::object_type(
+        id           = "Encounter",
+        properties   = list(
+          list(id = "encounter_id",   type = "text"),
+          list(id = "length_of_stay", type = "integer"),
+          list(id = "diagnosis_code", type = "text")
+        ),
+        primary_key  = "encounter_id",
+        source_kind  = "table",
+        source_table = "encounters"
       )
-    ),
-    class = "ontology_bundle"
+    )
   )
 
   DBI::dbExecute(con, "

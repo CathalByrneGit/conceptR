@@ -22,13 +22,23 @@ library(duckdb)
 
 con <- DBI::dbConnect(duckdb(), ":memory:")
 
-bundle <- structure(
-  list(
-    object_types = list(
-      list(id = "Patient", table_name = "patients", primary_key = "patient_id")
+bundle <- ontologySpecR::bundle(
+  bundle_id      = "scores-vignette",
+  bundle_version = "0.1.0",
+  objects = list(
+    ontologySpecR::object_type(
+      id           = "Patient",
+      properties   = list(
+        list(id = "patient_id", type = "text"),
+        list(id = "age", type = "integer"),
+        list(id = "comorbidities", type = "integer"),
+        list(id = "readmission_risk", type = "integer")
+      ),
+      primary_key  = "patient_id",
+      source_kind  = "table",
+      source_table = "patients"
     )
-  ),
-  class = "ontology_bundle"
+  )
 )
 
 DBI::dbExecute(con, "

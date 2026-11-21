@@ -60,7 +60,7 @@ cpt_evaluate_score <- function(ctx, score_id) {
 
   ot_id <- score_def$object_type_id
   ot    <- .resolve_object_type(ctx, ot_id)
-  pk    <- ot$primary_key
+  pk    <- .ot_pk(ot)
 
   results <- lapply(seq_len(nrow(comps)), function(i) {
     comp <- comps[i, ]

@@ -1,25 +1,28 @@
 Package: conceptR
-Title: Concept Lifecycle, Evaluation, and Scoring for Ontology-Based Systems
-Version: 0.1.0
+Title: Concept Lifecycle, Evaluation, Audit and Drift Governance
+Version: 0.2.0
 Description: Versioned, scoped concept definitions evaluated as SQL expressions
     against ontology object types. Concepts are hypotheses: they can be drafted,
-    activated, deprecated, and compared. Supports concept templates, inheritance,
-    composite scores, and scenario analysis.
+    activated, deprecated, staged, and compared. Includes audit sampling, reviewer
+    judgments, drift detection, governance logging, RBAC, and promotion gates.
+    Absorbs the auditR package — no separate auditR dependency required.
 Depends: R (>= 3.6)
 Imports:
     DBI,
     jsonlite,
-    cli
+    cli,
+    ontologySpecR
 Suggests:
     duckdb,
     RSQLite,
-    ontologySpecR,
-    objectSetsR,
-    auditR,
-    objectExploreR,
+    zoo,
+    actionTypesR,
     testthat (>= 3.0.0),
     knitr,
     rmarkdown
+Remotes:
+    CathalByrneGit/ontologySpecR,
+    CathalByrneGit/actionTypesR
 License: MIT + file LICENSE
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
