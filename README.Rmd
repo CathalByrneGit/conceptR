@@ -243,6 +243,7 @@ R/
 - `vignette("concept-overview")` — full lifecycle walkthrough
 - `vignette("templates")` — ILO unemployment template with country variants
 - `vignette("scores")` — composite frailty index example
+- `vignette("audit-governance")` — sampling, drift detection and the promotion gate
 
 ## Related packages
 
