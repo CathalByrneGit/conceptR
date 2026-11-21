@@ -5,7 +5,7 @@ Description: Versioned, scoped concept definitions evaluated as SQL expressions
     against ontology object types. Concepts are hypotheses: they can be drafted,
     activated, deprecated, staged, and compared. Includes audit sampling, reviewer
     judgments, drift detection, governance logging, RBAC, and promotion gates.
-    Absorbs the auditR package — no separate auditR dependency required.
+    Absorbs the auditR package - no separate auditR dependency required.
 Depends: R (>= 3.6)
 Imports:
     DBI,

@@ -237,7 +237,7 @@ cpt_promote <- function(ctx, concept_id, scope, version,
 #' @param scope Character.
 #' @param version Integer.
 #' @param to_stage One of `"development"` or `"staging"`.
-#' @param reason Character. Required — must explain why rolling back.
+#' @param reason Character. Required; must explain why rolling back.
 #' @return `ctx` invisibly.
 #' @export
 cpt_rollback <- function(ctx, concept_id, scope, version,

@@ -65,3 +65,29 @@ test_that("cpt_compare_versions diff is correct", {
   expect_true(diff$only_b >= 0L)
   expect_true(diff$match  >= 0L)
 })
+
+test_that("object types with source$schema are queried schema-qualified", {
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("ontologySpecR")
+  con <- DBI::dbConnect(duckdb::duckdb(), ":memory:")
+  on.exit(DBI::dbDisconnect(con, shutdown = TRUE))
+  DBI::dbExecute(con, "CREATE SCHEMA flights")
+  DBI::dbExecute(con, "CREATE TABLE flights.airports (airport_id TEXT PRIMARY KEY, elevation INTEGER)")
+  DBI::dbExecute(con, "INSERT INTO flights.airports VALUES ('A', 10), ('B', 2000)")
+
+  ot <- ontologySpecR::object_type(
+    id = "Airport",
+    properties = list(list(id = "airport_id", type = "text"),
+                      list(id = "elevation", type = "integer")),
+    primary_key = "airport_id", source_kind = "table", source_table = "airports")
+  ot$source$schema <- "flights"
+  bundle <- ontologySpecR::bundle(bundle_id = "t", bundle_version = "0.1.0",
+                                  objects = list(ot))
+
+  ctx <- concept_context(bundle, con)
+  cpt_define(ctx, "high", "Airport")
+  cpt_add_version(ctx, "high", "geo", "elevation > 1000", status = "active")
+  res <- cpt_evaluate(ctx, "high", "geo")
+  expect_equal(res$high[res$airport_id == "B"], TRUE)
+  expect_equal(res$high[res$airport_id == "A"], FALSE)
+})

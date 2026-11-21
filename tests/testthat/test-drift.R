@@ -2,7 +2,7 @@ test_that("below threshold: no drift event created", {
   skip_if_not_installed("duckdb")
   ctx <- make_test_ctx()
 
-  # Only 3 judgments — below minimum count of 5
+  # Only 3 judgments - below minimum count of 5
   insert_judgments(ctx, "rfd", "flow", n_agree = 2L, n_disagree = 1L)
 
   result <- adt_detect_drift(ctx, "rfd", "flow", version = 1L,

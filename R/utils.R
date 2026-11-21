@@ -126,13 +126,19 @@
 # ontologySpecR object-type accessors
 # ---------------------------------------------------------------------------
 
-.ot_table <- function(ot) ot$source$table
+.ot_table <- function(ot) {
+  tbl <- ot$source$table
+  sch <- ot$source$schema
+  if (!is.null(sch) && length(sch) == 1L && !is.na(sch) && nzchar(sch))
+    DBI::Id(schema = as.character(sch), table = as.character(tbl))
+  else tbl
+}
 
 .ot_pk <- function(ot) {
   pk <- ot$primaryKey$properties
   if (length(pk) > 1L)
     cli::cli_abort(
-      "Object type {.val {ot$id}} has a composite primary key — single-column PKs are required.")
+      "Object type {.val {ot$id}} has a composite primary key; single-column PKs are required.")
   if (is.list(pk)) pk[[1L]] else as.character(pk[[1L]])
 }
 
