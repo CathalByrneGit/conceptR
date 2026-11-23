@@ -79,8 +79,8 @@ test_that("object types with source$schema are queried schema-qualified", {
     id = "Airport",
     properties = list(list(id = "airport_id", type = "text"),
                       list(id = "elevation", type = "integer")),
-    primary_key = "airport_id", source_kind = "table", source_table = "airports")
-  ot$source$schema <- "flights"
+    primary_key = "airport_id", source_kind = "table", source_table = "airports",
+    source_schema = "flights")
   bundle <- ontologySpecR::bundle(bundle_id = "t", bundle_version = "0.1.0",
                                   objects = list(ot))
 
@@ -90,4 +90,47 @@ test_that("object types with source$schema are queried schema-qualified", {
   res <- cpt_evaluate(ctx, "high", "geo")
   expect_equal(res$high[res$airport_id == "B"], TRUE)
   expect_equal(res$high[res$airport_id == "A"], FALSE)
+})
+
+test_that("cpt_evaluate works on a schema-qualified table in SQLite", {
+  skip_if_not_installed("RSQLite")
+  skip_if_not_installed("ontologySpecR")
+  con <- DBI::dbConnect(RSQLite::SQLite(), ":memory:")
+  on.exit(DBI::dbDisconnect(con))
+  DBI::dbExecute(con, "ATTACH DATABASE ':memory:' AS analytics")
+  DBI::dbExecute(con, "CREATE TABLE analytics.patients (patient_id TEXT PRIMARY KEY, age INTEGER)")
+  DBI::dbExecute(con, "INSERT INTO analytics.patients VALUES ('p1', 70), ('p2', 30)")
+
+  ot <- ontologySpecR::object_type(
+    id = "Patient",
+    properties = list(ontologySpecR::property_def("patient_id", "string"),
+                      ontologySpecR::property_def("age", "integer")),
+    primary_key = "patient_id", source_kind = "table",
+    source_table = "patients", source_schema = "analytics")
+  bundle <- ontologySpecR::bundle(bundle_id = "t-sqlite", bundle_version = "0.1.0",
+                                  objects = list(ot))
+
+  ctx <- concept_context(bundle, con)
+  cpt_define(ctx, "elderly", "Patient")
+  cpt_add_version(ctx, "elderly", "clinical", "age >= 65", status = "active")
+  res <- cpt_evaluate(ctx, "elderly", "clinical")
+  expect_equal(res$elderly[res$patient_id == "p1"], TRUE)
+  expect_equal(res$elderly[res$patient_id == "p2"], FALSE)
+})
+
+test_that("cpt_evaluate aborts clearly for query-backed object types", {
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("ontologySpecR")
+  con <- DBI::dbConnect(duckdb::duckdb(), ":memory:")
+  on.exit(DBI::dbDisconnect(con, shutdown = TRUE))
+  ot <- ontologySpecR::object_type(
+    id = "Computed",
+    properties = list(ontologySpecR::property_def("id", "string")),
+    primary_key = "id", source_kind = "query", source_sql = "SELECT 'a' AS id")
+  bundle <- ontologySpecR::bundle(bundle_id = "t-query", bundle_version = "0.1.0",
+                                  objects = list(ot))
+  ctx <- concept_context(bundle, con)
+  cpt_define(ctx, "c1", "Computed")
+  cpt_add_version(ctx, "c1", "s", "TRUE", status = "active")
+  expect_error(cpt_evaluate(ctx, "c1", "s"), "query-backed")
 })

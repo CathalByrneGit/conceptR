@@ -1,6 +1,6 @@
 Package: conceptR
 Title: Concept Lifecycle, Evaluation, Audit and Drift Governance
-Version: 0.2.0
+Version: 0.2.1
 Description: Versioned, scoped concept definitions evaluated as SQL expressions
     against ontology object types. Concepts are hypotheses: they can be drafted,
     activated, deprecated, staged, and compared. Includes audit sampling, reviewer
@@ -11,7 +11,7 @@ Imports:
     DBI,
     jsonlite,
     cli,
-    ontologySpecR
+    ontologySpecR (>= 0.2.2)
 Suggests:
     duckdb,
     RSQLite,

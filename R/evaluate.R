@@ -24,9 +24,9 @@ cpt_evaluate <- function(ctx, concept_id, scope, version = NULL,
     cli::cli_abort("sql_expr for {.val {concept_id}} v{ver_row$version} is empty.")
 
   ot_id <- object_type_id %||% .get_def_row(ctx, concept_id)$object_type_id
-  ot    <- .resolve_object_type(ctx, ot_id)
+  ot    <- ontologySpecR::bundle_object_type(ctx$bundle, ot_id)
 
-  .eval_sql(ctx, .ot_table(ot), .ot_pk(ot), concept_id, sql_expr)
+  .eval_sql(ctx, .table_ref(ot), .pk_col(ot), concept_id, sql_expr)
 }
 
 #' Evaluate multiple concepts
@@ -63,11 +63,11 @@ cpt_compare_versions <- function(ctx, concept_id, scope, version_a, version_b) {
   if (nrow(row_b) == 0) cli::cli_abort("Version {version_b} not found.")
 
   ot_id <- .get_def_row(ctx, concept_id)$object_type_id
-  ot    <- .resolve_object_type(ctx, ot_id)
-  pk    <- .ot_pk(ot)
+  ot    <- ontologySpecR::bundle_object_type(ctx$bundle, ot_id)
+  pk    <- .pk_col(ot)
 
-  df_a <- .eval_sql(ctx, .ot_table(ot), pk, concept_id, row_a$sql_expr[1])
-  df_b <- .eval_sql(ctx, .ot_table(ot), pk, concept_id, row_b$sql_expr[1])
+  df_a <- .eval_sql(ctx, .table_ref(ot), pk, concept_id, row_a$sql_expr[1])
+  df_b <- .eval_sql(ctx, .table_ref(ot), pk, concept_id, row_b$sql_expr[1])
 
   col   <- concept_id
   ids_a <- df_a[[pk]][df_a[[col]] == TRUE]
@@ -101,13 +101,4 @@ cpt_compare_versions <- function(ctx, concept_id, scope, version_a, version_b) {
   df <- DBI::dbGetQuery(con, query)
   df[[concept_id]] <- as.logical(df[[concept_id]])
   df
-}
-
-# Look up an object type from the bundle (ontologySpecR uses $objects, not $object_types)
-.resolve_object_type <- function(ctx, object_type_id) {
-  ots <- ctx$bundle$objects
-  idx <- which(vapply(ots, function(x) x$id == object_type_id, logical(1)))
-  if (length(idx) == 0)
-    cli::cli_abort("Object type {.val {object_type_id}} not found in bundle.")
-  ots[[idx[1]]]
 }

@@ -59,8 +59,8 @@ cpt_evaluate_score <- function(ctx, score_id) {
     cli::cli_abort("Score {.val {score_id}} has no components.")
 
   ot_id <- score_def$object_type_id
-  ot    <- .resolve_object_type(ctx, ot_id)
-  pk    <- .ot_pk(ot)
+  ot    <- ontologySpecR::bundle_object_type(ctx$bundle, ot_id)
+  pk    <- .pk_col(ot)
 
   results <- lapply(seq_len(nrow(comps)), function(i) {
     comp <- comps[i, ]

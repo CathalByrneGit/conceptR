@@ -1,3 +1,13 @@
+# conceptR 0.2.1
+
+* Object types are now read through ontologySpecR (>= 0.2.2): conceptR's own
+  `.ot_table()`, `.ot_pk()` and `.resolve_object_type()` are gone. Table
+  references come from `ontologySpecR::object_table_id()` via one internal
+  `.table_ref()`, so schema-qualified types (`source$schema`) work on any DBI
+  backend.
+* Query-backed object types (`source$kind = "query"`) are not supported yet and
+  abort with a clear error pointing at `object_source_sql()`.
+
 # conceptR 0.2.0
 
 ## Breaking changes

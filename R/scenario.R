@@ -15,11 +15,11 @@ cpt_scenario <- function(ctx, concept_id, scope, proposed_sql,
   current_sql <- ver_row$sql_expr[1]
 
   ot_id <- .get_def_row(ctx, concept_id)$object_type_id
-  ot    <- .resolve_object_type(ctx, ot_id)
-  pk    <- .ot_pk(ot)
+  ot    <- ontologySpecR::bundle_object_type(ctx$bundle, ot_id)
+  pk    <- .pk_col(ot)
 
-  df_current  <- .eval_sql(ctx, .ot_table(ot), pk, concept_id, current_sql)
-  df_proposed <- .eval_sql(ctx, .ot_table(ot), pk, paste0(concept_id, "_proposed"), proposed_sql)
+  df_current  <- .eval_sql(ctx, .table_ref(ot), pk, concept_id, current_sql)
+  df_proposed <- .eval_sql(ctx, .table_ref(ot), pk, paste0(concept_id, "_proposed"), proposed_sql)
 
   col_curr <- concept_id
   col_prop <- paste0(concept_id, "_proposed")
